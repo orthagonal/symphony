@@ -50,6 +50,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
+      field(:database_path, :string)
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
     end
@@ -59,7 +60,7 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
+        [:kind, :endpoint, :api_key, :project_slug, :assignee, :database_path, :active_states, :terminal_states],
         empty_values: []
       )
     end
@@ -91,12 +92,15 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:seed_mode, :string, default: "copy")
+      field(:seed_path, :string)
+      field(:seed_git_url, :string)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root], empty_values: [])
+      |> cast(attrs, [:root, :seed_mode, :seed_path, :seed_git_url], empty_values: [])
     end
   end
 
@@ -374,7 +378,14 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
+        seed_path: resolve_optional_path(settings.workspace.seed_path)
+    }
+
+    tracker = %{
+      tracker
+      | database_path:
+          resolve_path_value(tracker.database_path, Path.join([File.cwd!(), "data", "symphony_tasks.db"]))
     }
 
     codex = %{
@@ -432,6 +443,17 @@ defmodule SymphonyElixir.Config.Schema do
 
       path ->
         path
+    end
+  end
+
+  defp resolve_optional_path(nil), do: nil
+  defp resolve_optional_path(""), do: nil
+
+  defp resolve_optional_path(value) when is_binary(value) do
+    case normalize_path_token(value) do
+      :missing -> nil
+      "" -> nil
+      path -> path
     end
   end
 

@@ -16,7 +16,7 @@ defmodule SymphonyElixirWeb.Layouts do
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="csrf-token" content={@csrf_token} />
-        <title>Symphony Observability</title>
+        <title>Symphony Agent Manager</title>
         <script defer src="/vendor/phoenix_html/phoenix_html.js"></script>
         <script defer src="/vendor/phoenix/phoenix.js"></script>
         <script defer src="/vendor/phoenix_live_view/phoenix_live_view.js"></script>
@@ -29,7 +29,9 @@ defmodule SymphonyElixirWeb.Layouts do
             if (!window.Phoenix || !window.LiveView) return;
 
             var liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
-              params: {_csrf_token: csrfToken}
+              params: {_csrf_token: csrfToken},
+              timeout: 60000,
+              longPollFallbackMs: 2500
             });
 
             liveSocket.connect();

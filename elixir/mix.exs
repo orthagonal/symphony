@@ -56,7 +56,7 @@ defmodule SymphonyElixir.MixProject do
   def application do
     [
       mod: {SymphonyElixir.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger, :ecto_sql]
     ]
   end
 
@@ -69,11 +69,14 @@ defmodule SymphonyElixir.MixProject do
       {:phoenix, "~> 1.8.0"},
       {:phoenix_html, "~> 4.2"},
       {:phoenix_live_view, "~> 1.1.0"},
+      {:phoenix_ecto, "~> 4.6"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:yaml_elixir, "~> 2.12"},
       {:solid, "~> 1.2"},
       {:ecto, "~> 3.13"},
+      {:ecto_sql, "~> 3.13"},
+      {:ecto_sqlite3, "~> 0.21"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]
@@ -81,7 +84,9 @@ defmodule SymphonyElixir.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get"],
+      setup: ["deps.get", "ecto.setup"],
+      "ecto.setup": ["ecto.create", "ecto.migrate"],
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
       build: ["escript.build"],
       lint: ["specs.check", "credo --strict"]
     ]

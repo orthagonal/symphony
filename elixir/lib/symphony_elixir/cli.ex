@@ -57,10 +57,14 @@ defmodule SymphonyElixir.CLI do
 
     if deps.file_regular?.(expanded_path) do
       :ok = deps.set_workflow_file_path.(expanded_path)
+      :ok = configure_runtime_paths(expanded_path)
 
-      case deps.ensure_all_started.() do
-        {:ok, _started_apps} ->
-          :ok
+      with :ok <- verify_local_sqlite_launcher(expanded_path),
+           {:ok, _started_apps} <- deps.ensure_all_started.() do
+        :ok
+      else
+        {:error, message} when is_binary(message) ->
+          {:error, message}
 
         {:error, reason} ->
           {:error, "Failed to start Symphony with workflow #{expanded_path}: #{inspect(reason)}"}
@@ -167,6 +171,136 @@ defmodule SymphonyElixir.CLI do
   defp set_server_port_override(port) when is_integer(port) and port >= 0 do
     Application.put_env(:symphony_elixir, :server_port_override, port)
     :ok
+  end
+
+  @spec verify_local_sqlite_launcher(Path.t()) :: :ok | {:error, String.t()}
+  defp verify_local_sqlite_launcher(workflow_path) do
+    if local_tracker?(workflow_path) and escript_launch?() and not sqlite_runtime_ready?(workflow_path) do
+      {:error, escript_sqlite_help_message(workflow_path)}
+    else
+      :ok
+    end
+  end
+
+  defp local_tracker?(workflow_path) do
+    case SymphonyElixir.Workflow.load(workflow_path) do
+      {:ok, %{config: %{"tracker" => %{"kind" => "local"}}}} -> true
+      _ -> false
+    end
+  end
+
+  defp escript_launch? do
+    not Code.ensure_loaded?(Mix)
+  end
+
+  defp sqlite_runtime_ready?(workflow_path) do
+    workflow_dir = Path.dirname(workflow_path)
+
+    try do
+      :ok = ensure_exqlite_nif!(workflow_dir)
+      {:ok, conn} = Exqlite.Sqlite3.open(":memory:")
+      :ok = Exqlite.Sqlite3.close(conn)
+      true
+    rescue
+      _ -> false
+    catch
+      _, _ -> false
+    end
+  end
+
+  defp escript_sqlite_help_message(workflow_path) do
+    """
+    Local SQLite tasks are not available via bin/symphony escript on this machine.
+
+    Run Symphony from the elixir directory with Mix instead:
+
+      mix symphony.run #{workflow_path} --port 4321 --i-understand-that-this-will-be-running-without-the-usual-guardrails
+
+    Then create tasks with:
+
+      mix symphony.task "Your task title"
+    """
+    |> String.trim()
+  end
+
+  @spec configure_runtime_paths(Path.t()) :: :ok
+  defp configure_runtime_paths(workflow_path) do
+    workflow_dir = Path.dirname(workflow_path)
+
+    priv_candidates = [
+      Path.join(workflow_dir, "priv"),
+      Path.join(workflow_dir, "_build/dev/lib/symphony_elixir/priv"),
+      Path.join(workflow_dir, "_build/escript/lib/symphony_elixir/priv")
+    ]
+
+    case Enum.find_value(priv_candidates, &migrations_path_for_priv/1) do
+      migrations_path when is_binary(migrations_path) ->
+        Application.put_env(:symphony_elixir, :migrations_path, migrations_path)
+
+      _ ->
+        :ok
+    end
+
+    :ok = ensure_exqlite_nif!(workflow_dir)
+
+    :ok
+  end
+
+  defp ensure_exqlite_nif!(workflow_dir) do
+    priv_candidates = [
+      Path.join(workflow_dir, "_build/dev/lib/exqlite/priv"),
+      Path.join(workflow_dir, "_build/escript/lib/exqlite/priv")
+    ]
+
+    priv =
+      Enum.find_value(priv_candidates, fn candidate ->
+        if File.dir?(candidate), do: candidate
+      end)
+
+    priv =
+      priv ||
+        case :code.priv_dir(:exqlite) do
+          path when is_binary(path) -> path
+          _ -> nil
+        end
+
+    if is_binary(priv) do
+      prepend_path_env!(priv)
+      prepend_code_path!(priv)
+
+      case Application.ensure_all_started(:exqlite) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          raise "failed to start exqlite: #{inspect(reason)}"
+      end
+    else
+      raise "exqlite priv directory not found; run `mix deps.compile exqlite` from #{workflow_dir}"
+    end
+  end
+
+  defp prepend_path_env!(directory) do
+    existing = System.get_env("PATH", "")
+    separator = if String.contains?(existing, ";"), do: ";", else: ":"
+    System.put_env("PATH", directory <> separator <> existing)
+  end
+
+  defp prepend_code_path!(directory) do
+    charlist = String.to_charlist(directory)
+
+    case :code.add_patha(charlist) do
+      true -> :ok
+      false -> :code.add_path(charlist)
+    end
+  end
+
+  defp migrations_path_for_priv(priv_dir) do
+    path = Path.join(priv_dir, "repo/migrations")
+
+    if File.dir?(path) do
+      path
+    end
   end
 
   @spec wait_for_shutdown() :: no_return()

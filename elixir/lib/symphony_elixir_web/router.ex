@@ -24,11 +24,30 @@ defmodule SymphonyElixirWeb.Router do
   scope "/", SymphonyElixirWeb do
     pipe_through(:browser)
 
-    live("/", DashboardLive, :index)
+    post("/tasks", TaskController, :create)
+    post("/tasks/:id/delete", TaskController, :delete)
+    post("/tasks/:id/dispatch", TaskController, :dispatch)
+    post("/queue/go", QueueController, :go)
+    post("/queue/stop", QueueController, :stop)
+
+    get("/codex", LegacyRedirectController, :codex_dashboard)
+
+    live("/", TaskDashboardLive, :index)
+    live("/reviews", ReviewsLive, :index)
+    live("/reviews/:id", ReviewsLive, :show)
+    live("/tasks/new", TaskLive.New, :new)
+    live("/tasks/:id", TaskLive.Show, :show)
+    live("/agents", AgentsLive, :index)
+    live("/settings", SettingsLive, :index)
+    live("/cursor", DashboardLive, :index)
   end
 
   scope "/", SymphonyElixirWeb do
     get("/api/v1/state", ObservabilityApiController, :state)
+    get("/api/v1/tasks", TasksApiController, :list)
+    post("/api/v1/tasks/:id/summarize", TasksApiController, :summarize)
+    post("/api/v1/tasks/:id/plan", TasksApiController, :plan)
+    post("/api/v1/tasks/:id/status", TasksApiController, :update_status)
 
     match(:*, "/", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)

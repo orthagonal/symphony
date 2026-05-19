@@ -22,15 +22,19 @@ defmodule SymphonyElixir.Application do
   @impl true
   def start(_type, _args) do
     :ok = SymphonyElixir.LogFile.configure()
+    :ok = SymphonyElixir.Tasks.configure_repo!()
 
-    children = [
-      {Phoenix.PubSub, name: SymphonyElixir.PubSub},
-      {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
-      SymphonyElixir.WorkflowStore,
-      SymphonyElixir.Orchestrator,
-      SymphonyElixir.HttpServer,
-      SymphonyElixir.StatusDashboard
-    ]
+    children =
+      database_children() ++
+        queue_children() ++
+        [
+          {Phoenix.PubSub, name: SymphonyElixir.PubSub},
+          {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+          SymphonyElixir.WorkflowStore,
+          SymphonyElixir.Orchestrator,
+          SymphonyElixir.HttpServer,
+          SymphonyElixir.StatusDashboard
+        ]
 
     Supervisor.start_link(
       children,
@@ -43,5 +47,24 @@ defmodule SymphonyElixir.Application do
   def stop(_state) do
     SymphonyElixir.StatusDashboard.render_offline_status()
     :ok
+  end
+
+  defp database_children do
+    if local_tracker?() do
+      [SymphonyElixir.Repo, SymphonyElixir.DatabaseSetup]
+    else
+      []
+    end
+  end
+
+  defp local_tracker? do
+    case SymphonyElixir.Workflow.load() do
+      {:ok, %{config: %{"tracker" => %{"kind" => "local"}}}} -> true
+      _ -> false
+    end
+  end
+
+  defp queue_children do
+    if local_tracker?(), do: [SymphonyElixir.TaskQueue], else: []
   end
 end
