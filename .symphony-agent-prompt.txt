@@ -1,0 +1,1 @@
+Read SYMPHONY_TASK.md in this workspace and implement the task. Work only in this directory. When finished, summarize what you changed.

@@ -119,7 +119,7 @@ defmodule SymphonyElixir.Config do
       is_nil(settings.tracker.kind) ->
         {:error, :missing_tracker_kind}
 
-      settings.tracker.kind not in ["linear", "memory"] ->
+      settings.tracker.kind not in ["linear", "memory", "local"] ->
         {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
 
       settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->

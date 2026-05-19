@@ -8,7 +8,6 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Install deps: `mix setup`.
 - Main quality gate: `make all` (format check, lint, coverage, dialyzer).
 
-
 ## Codebase-Specific Conventions
 
 - Runtime config is loaded from `WORKFLOW.md` front matter via `SymphonyElixir.Workflow` and `SymphonyElixir.Config`.

@@ -1,23 +1,31 @@
 defmodule SymphonyElixirWeb.DashboardLive do
   @moduledoc """
-  Live observability dashboard for Symphony.
+  Live observability dashboard for Symphony (runtime + Cursor Agent CLI account).
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
+  import SymphonyElixirWeb.Components.Nav
+
+  alias SymphonyElixir.Cursor
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
+
   @runtime_tick_ms 1_000
+  @cursor_refresh_ms 45_000
 
   @impl true
   def mount(_params, _session, socket) do
     socket =
       socket
+      |> assign(:page, :cursor)
+      |> assign(:cursor_account, unloaded_cursor_account())
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
       schedule_runtime_tick()
+      send(self(), :refresh_cursor_account)
     end
 
     {:ok, socket}
@@ -38,6 +46,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @impl true
+  def handle_info(:refresh_cursor_account, socket) do
+    schedule_cursor_refresh()
+
+    {:noreply,
+     socket
+     |> assign(:cursor_account, load_cursor_account())
+     |> assign(:now, DateTime.utc_now())}
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
@@ -45,25 +63,28 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <div class="hero-grid">
           <div>
             <p class="eyebrow">
-              Symphony Observability
+              Cursor observability
             </p>
             <h1 class="hero-title">
-              Operations Dashboard
+              Operations dashboard
             </h1>
             <p class="hero-copy">
-              Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
+              Cursor Agent CLI account (your logged-in plan and default model). Running / retrying counts and Codex-derived token totals still reflect the Linear orchestrator snapshot when enabled.
             </p>
           </div>
 
-          <div class="status-stack">
-            <span class="status-badge status-badge-live">
-              <span class="status-badge-dot"></span>
-              Live
-            </span>
-            <span class="status-badge status-badge-offline">
-              <span class="status-badge-dot"></span>
-              Offline
-            </span>
+          <div class="status-stack-with-nav">
+            <.agent_nav current={@page} />
+            <div class="status-stack">
+              <span class="status-badge status-badge-live">
+                <span class="status-badge-dot"></span>
+                Live
+              </span>
+              <span class="status-badge status-badge-offline">
+                <span class="status-badge-dot"></span>
+                Offline
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -82,17 +103,37 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <article class="metric-card">
             <p class="metric-label">Running</p>
             <p class="metric-value numeric"><%= @payload.counts.running %></p>
-            <p class="metric-detail">Active issue sessions in the current runtime.</p>
+            <p class="metric-detail">Orchestrator sessions marked active.</p>
           </article>
 
           <article class="metric-card">
             <p class="metric-label">Retrying</p>
             <p class="metric-value numeric"><%= @payload.counts.retrying %></p>
-            <p class="metric-detail">Issues waiting for the next retry window.</p>
+            <p class="metric-detail">Orchestrator issues in retry backoff.</p>
           </article>
 
           <article class="metric-card">
-            <p class="metric-label">Total tokens</p>
+            <p class="metric-label">Cursor subscription</p>
+            <p class="metric-value">
+              <%= cursor_metric_value(@cursor_account, :tier) %>
+            </p>
+            <p class="metric-detail numeric">
+              <%= cursor_metric_detail(@cursor_account, :tier) %>
+            </p>
+          </article>
+
+          <article class="metric-card">
+            <p class="metric-label">Cursor default model</p>
+            <p class="metric-value text-metric-value">
+              <%= cursor_metric_value(@cursor_account, :model) %>
+            </p>
+            <p class="metric-detail numeric">
+              <%= cursor_metric_detail(@cursor_account, :model) %>
+            </p>
+          </article>
+
+          <article class="metric-card">
+            <p class="metric-label">Codex token totals</p>
             <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
               In <%= format_int(@payload.codex_totals.input_tokens) %> / Out <%= format_int(@payload.codex_totals.output_tokens) %>
@@ -100,17 +141,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </article>
 
           <article class="metric-card">
-            <p class="metric-label">Runtime</p>
+            <p class="metric-label">Codex orchestration runtime</p>
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
-            <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
+            <p class="metric-detail">Wall time across Codex-backed sessions plus active runs.</p>
           </article>
         </section>
 
         <section class="section-card">
           <div class="section-header">
             <div>
-              <h2 class="section-title">Rate limits</h2>
-              <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
+              <h2 class="section-title">Upstream Codex rate limits</h2>
+              <p class="section-copy">From the Symphony orchestrator (OpenAI Codex app-server path), not Cursor.</p>
             </div>
           </div>
 
@@ -144,7 +185,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <th>State</th>
                     <th>Session</th>
                     <th>Runtime / turns</th>
-                    <th>Codex update</th>
+                    <th>Last Codex activity</th>
                     <th>Tokens</th>
                   </tr>
                 </thead>
@@ -319,6 +360,102 @@ defmodule SymphonyElixirWeb.DashboardLive do
       String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
       true -> base
     end
+  end
+
+  defp unloaded_cursor_account do
+    %{loaded: false, ok: nil, error: nil, data: nil}
+  end
+
+  defp load_cursor_account do
+    case Cursor.account_snapshot() do
+      {:ok, data} ->
+        %{loaded: true, ok: true, error: nil, data: data}
+
+      {:error, reason} ->
+        %{loaded: true, ok: false, error: cursor_account_error_text(reason), data: nil}
+    end
+  end
+
+  defp cursor_account_error_text(:cursor_agent_missing),
+    do: "cursor-agent CLI not installed or not on PATH (set CURSOR_AGENT_COMMAND)"
+
+  defp cursor_account_error_text(:empty_agent_output),
+    do: "cursor-agent returned empty output"
+
+  defp cursor_account_error_text({:cursor_agent_cmd_failed, code, detail}),
+    do: "cursor-agent failed (#{code}): #{shorten_agent_text(detail, 240)}"
+
+  defp cursor_account_error_text({:invalid_json, snippet}),
+    do: "invalid cursor-agent JSON: #{shorten_agent_text(snippet, 160)}"
+
+  defp cursor_account_error_text(other),
+    do: inspect(other)
+
+  defp shorten_agent_text(text, max) when is_binary(text) do
+    compact = String.replace(text, ~r/\s+/u, " ")
+
+    if String.length(compact) <= max do
+      compact
+    else
+      String.slice(compact, 0, max) <> "…"
+    end
+  end
+
+  defp shorten_agent_text(_other, _max), do: ""
+
+  defp cursor_metric_value(%{loaded: false}, _field), do: "…"
+
+  defp cursor_metric_value(%{ok: false}, :tier), do: "Unavailable"
+  defp cursor_metric_value(%{ok: false}, :model), do: "—"
+
+  defp cursor_metric_value(%{ok: true, data: %{subscription_tier: tier}}, :tier)
+       when is_binary(tier) and tier != "",
+       do: tier
+
+  defp cursor_metric_value(%{ok: true, data: _}, :tier), do: "—"
+
+  defp cursor_metric_value(%{ok: true, data: %{model: model}}, :model)
+       when is_binary(model) and model != "",
+       do: model
+
+  defp cursor_metric_value(%{ok: true, data: _}, :model), do: "—"
+
+  defp cursor_metric_detail(%{loaded: false}, _), do: "Loading Cursor account …"
+
+  defp cursor_metric_detail(%{ok: false, error: msg}, _), do: msg
+
+  defp cursor_metric_detail(%{ok: true, data: data}, :tier), do: cursor_tier_secondary(data)
+
+  defp cursor_metric_detail(%{ok: true, data: data}, :model),
+    do: cursor_model_secondary(data)
+
+  defp cursor_tier_secondary(data) when is_map(data) do
+    auth = if Map.get(data, :authenticated), do: "signed in", else: "not signed in"
+
+    line =
+      [auth, Map.get(data, :email), cli_version_fragment(Map.get(data, :cli_version))]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join(" · ")
+
+    if line == "", do: auth, else: line
+  end
+
+  defp cursor_tier_secondary(_), do: ""
+
+  defp cli_version_fragment(v) when is_binary(v) and v != "", do: "CLI #{v}"
+  defp cli_version_fragment(_), do: nil
+
+  defp cursor_model_secondary(%{os_platform: os, shell: shell}) do
+    case Enum.join(Enum.reject([os, shell], &(&1 in [nil, ""])), " · ") do
+      "" -> "From cursor-agent about"
+      platform_line -> platform_line
+    end
+  end
+
+  defp cursor_model_secondary(_), do: "From cursor-agent about"
+
+  defp schedule_cursor_refresh do
+    Process.send_after(self(), :refresh_cursor_account, @cursor_refresh_ms)
   end
 
   defp schedule_runtime_tick do

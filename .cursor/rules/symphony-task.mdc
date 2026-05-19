@@ -1,0 +1,8 @@
+You are working on Symphony task TASK-19.
+
+- Read `SYMPHONY_TASK.md` in this folder first.
+- Project root: c:/GitHub/symphony
+- Git: main @ bbef623 (dirty) · https://github.com/openai/symphony.git — respect current branch and uncommitted state.
+- Follow git workflow in SYMPHONY_TASK.md when in a git repo.
+- Do not run `mix symphony.task` from an isolated workspace copy (not a full Symphony runtime).
+- When finished, mark done via the API in SYMPHONY_TASK.md, or rely on Symphony auto-marking done after headless agent success.
