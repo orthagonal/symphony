@@ -26,6 +26,7 @@ defmodule SymphonyElixirWeb.Router do
 
     post("/tasks", TaskController, :create)
     post("/tasks/:id/delete", TaskController, :delete)
+    post("/task-groups/:id/delete", TaskGroupController, :delete)
     post("/tasks/:id/dispatch", TaskController, :dispatch)
     post("/queue/go", QueueController, :go)
     post("/queue/stop", QueueController, :stop)

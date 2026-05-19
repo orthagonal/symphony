@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.TaskGroups
+  alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
   import SymphonyElixirWeb.Components.TaskBadges
 
@@ -14,7 +15,9 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
         {:ok,
          socket
          |> assign(:page, :task_groups)
-         |> assign(:group, TaskGroups.get_with_tasks!(group_id))}
+         |> assign(:group_id, group_id)
+         |> assign(:csrf_token, Plug.CSRFProtection.get_csrf_token())
+         |> load_group()}
 
       _ ->
         {:ok,
@@ -22,6 +25,17 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
          |> put_flash(:error, "Invalid group id")
          |> push_navigate(to: "/task-groups")}
     end
+  end
+
+  @impl true
+  def handle_event("set_all_status", %{"status" => status}, socket) do
+    group = TaskGroups.update_all_tasks_status!(socket.assigns.group_id, status)
+    count = length(group.tasks)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Set #{count} task#{if count == 1, do: "", else: "s"} to #{status}")
+     |> assign(:group, group)}
   end
 
   @impl true
@@ -46,6 +60,33 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
       <section class="section-card">
         <h2 class="section-title">Description</h2>
         <pre class="task-body"><%= @group.description || "(none)" %></pre>
+
+        <p class="section-copy"><strong>Set all tasks in this group</strong></p>
+        <p class="section-copy">
+          Updates every task in this group to the chosen status (<%= length(@group.tasks) %> task<%= if length(@group.tasks) == 1, do: "", else: "s" %>).
+        </p>
+        <div class="status-actions">
+          <button
+            :for={status <- Task.statuses()}
+            type="button"
+            class="secondary"
+            phx-click="set_all_status"
+            phx-value-status={status}
+          >
+            <%= status %>
+          </button>
+        </div>
+        <div class="delete-task-wrap">
+          <form
+            action={"/task-groups/#{@group.id}/delete"}
+            method="post"
+            class="delete-task-form"
+            onsubmit={"return confirm('Delete GROUP-#{@group.id} and all #{length(@group.tasks)} tasks permanently? This cannot be undone.');"}
+          >
+            <input type="hidden" name="_csrf_token" value={@csrf_token} />
+            <button type="submit" class="danger">Delete group and tasks</button>
+          </form>
+        </div>
       </section>
 
       <section class="section-card">
@@ -68,5 +109,9 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
       </p>
     </section>
     """
+  end
+
+  defp load_group(socket) do
+    assign(socket, :group, TaskGroups.get_with_tasks!(socket.assigns.group_id))
   end
 end

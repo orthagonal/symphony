@@ -101,6 +101,30 @@ defmodule SymphonyElixir.TaskGroups do
     {:ok, tasks}
   end
 
+  @spec update_all_tasks_status!(integer(), String.t()) :: TaskGroup.t()
+  def update_all_tasks_status!(group_id, status) when is_integer(group_id) and is_binary(status) do
+    group = get_with_tasks!(group_id)
+
+    Enum.each(group.tasks, fn task ->
+      _ = Tasks.update_status!(task.id, status)
+      _ = Tasks.log_event!(task.id, "status", "Group bulk update → #{status} (GROUP-#{group_id})")
+    end)
+
+    get_with_tasks!(group_id)
+  end
+
+  @spec delete_group!(integer()) :: :ok
+  def delete_group!(group_id) when is_integer(group_id) do
+    group = get_with_tasks!(group_id)
+
+    Enum.each(group.tasks, fn task ->
+      _ = Tasks.delete!(task.id)
+    end)
+
+    Repo.delete!(group)
+    :ok
+  end
+
   defp default_group_title(description) do
     description
     |> String.split("\n", parts: 2)
