@@ -5,7 +5,7 @@ defmodule SymphonyElixir.Cursor.Dispatch do
 
   require Logger
 
-  alias SymphonyElixir.{Cursor, Ollama, Tasks, Workspace}
+  alias SymphonyElixir.{Cursor, LocalDispatch, Ollama, Tasks, Workspace}
   alias SymphonyElixir.Cursor.WorkspaceBootstrap
   alias SymphonyElixir.Tasks.Task
 
@@ -30,12 +30,20 @@ defmodule SymphonyElixir.Cursor.Dispatch do
 
   @spec run(integer(), keyword()) :: {:ok, Task.t()} | {:error, term()}
   def run(task_id, opts \\ []) when is_integer(task_id) do
+    task = Tasks.get_with_events!(task_id)
+
+    if task.local_only do
+      LocalDispatch.run(task_id, opts)
+    else
+      run_remote(task_id, opts, task)
+    end
+  end
+
+  defp run_remote(_task_id, opts, task) do
     auto_plan? = Keyword.get(opts, :auto_plan, true)
     open_ide? = Keyword.get(opts, :open_ide, false)
     run_agent? = Keyword.get(opts, :run_agent, true)
     git_batch = Keyword.get(opts, :git_batch)
-
-    task = Tasks.get_with_events!(task_id)
     identifier = "TASK-#{task.id}"
 
     safe_log(task.id, "dispatch", "Dispatch started")

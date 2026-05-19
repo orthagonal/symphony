@@ -5,7 +5,7 @@ defmodule SymphonyElixirWeb.TaskLive.New do
 
   require Logger
 
-  alias SymphonyElixir.{Ollama, Tasks}
+  alias SymphonyElixir.{Ollama, TaskGroups, Tasks}
   alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
 
@@ -23,7 +23,9 @@ defmodule SymphonyElixirWeb.TaskLive.New do
      |> assign(:page, :new_task)
      |> assign(:form, to_form(changeset, as: :task))
      |> assign(:llm_busy, false)
-     |> assign(:llm_hint, nil)}
+     |> assign(:llm_hint, nil)
+     |> assign(:group_description, "")
+     |> assign(:group_busy, false)}
   end
 
   @impl true
@@ -65,6 +67,64 @@ defmodule SymphonyElixirWeb.TaskLive.New do
          :error,
          "Save failed: #{Exception.message(error)}. Try again or refresh the page."
        )}
+  end
+
+  @impl true
+  def handle_event("update_group_description", %{"group_description" => text}, socket) do
+    {:noreply, assign(socket, :group_description, text)}
+  end
+
+  @impl true
+  def handle_event("generate_task_group", params, socket) do
+    form = socket.assigns.form
+
+    description =
+      params
+      |> Map.get("group_description", socket.assigns.group_description)
+      |> to_string()
+      |> String.trim()
+
+    if description == "" do
+      {:noreply, put_flash(socket, :error, "Enter a description for the overnight task group")}
+    else
+      parent = self()
+
+      Elixir.Task.start(fn ->
+        result =
+          TaskGroups.generate_from_description(description,
+            title: form[:title].value,
+            project_path: blank_to_nil(form[:project_path].value),
+            workspace_mode: form[:workspace_mode].value || "isolated",
+            priority: parse_priority(form[:priority].value)
+          )
+
+        send(parent, {:task_group_done, result})
+      end)
+
+      {:noreply,
+       socket
+       |> assign(:group_busy, true)
+       |> assign(:llm_hint, "Generating task group with Ollama…")}
+    end
+  end
+
+  @impl true
+  def handle_info({:task_group_done, {:ok, group, tasks}}, socket) do
+    count = length(tasks)
+
+    {:noreply,
+     socket
+     |> assign(:group_busy, false)
+     |> assign(:llm_hint, "Created group ##{group.id} with #{count} local-only tasks")
+     |> push_navigate(to: "/task-groups/#{group.id}")}
+  end
+
+  @impl true
+  def handle_info({:task_group_done, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:group_busy, false)
+     |> assign(:llm_hint, "Task group failed: #{format_error(reason)}")}
   end
 
   @impl true
@@ -178,6 +238,15 @@ defmodule SymphonyElixirWeb.TaskLive.New do
               <input type="checkbox" name="dispatch_immediately" value="true" />
               <span>Dispatch immediately (skip queue)</span>
             </label>
+            <label class="form-span-all dispatch-option">
+              <input
+                type="checkbox"
+                name={@form[:local_only].name}
+                value="true"
+                checked={@form[:local_only].value in [true, "true"]}
+              />
+              <span>Local only (Ollama — never Cursor/cursor-agent)</span>
+            </label>
           </div>
           <p class="section-copy form-span-all">
             Tasks join the queue by default. Click <strong>Go</strong> on the dashboard to process them in order.
@@ -191,6 +260,30 @@ defmodule SymphonyElixirWeb.TaskLive.New do
         </.form>
         <p :if={@llm_hint} class="llm-box"><%= @llm_hint %></p>
       </section>
+
+      <section class="section-card form-card">
+        <h2 class="section-title">Generate task group</h2>
+        <p class="section-copy">
+          Uses Ollama to split a large task into smaller <strong>local-only</strong> subtasks (overnight batch).
+          Project folder and workspace mode above apply to every child task.
+        </p>
+        <.form for={@form} id="task-group-form" phx-submit="generate_task_group">
+          <label class="form-span-all">
+            <span>Parent task description</span>
+            <textarea
+              name="group_description"
+              rows="6"
+              phx-change="update_group_description"
+              phx-debounce="300"
+            ><%= @group_description %></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="secondary" disabled={@group_busy || @llm_busy}>
+              Generate task group
+            </button>
+          </div>
+        </.form>
+      </section>
     </section>
     """
   end
@@ -199,8 +292,30 @@ defmodule SymphonyElixirWeb.TaskLive.New do
   defp workspace_mode_label("linked"), do: "Linked (work directly in project folder)"
   defp workspace_mode_label(other), do: other
 
+  defp parse_priority(nil), do: 3
+  defp parse_priority(""), do: 3
+
+  defp parse_priority(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int in 1..4 -> int
+      _ -> 3
+    end
+  end
+
+  defp parse_priority(value) when is_integer(value), do: value
+  defp parse_priority(_), do: 3
+
+  defp format_error(reason) when is_binary(reason), do: reason
+  defp format_error(%{__struct__: _} = err), do: Exception.message(err)
+  defp format_error(reason), do: inspect(reason)
+
   defp normalize_params(params) when is_map(params) do
     params
+    |> Map.update("local_only", false, fn
+      "true" -> true
+      true -> true
+      _ -> false
+    end)
     |> Map.update("priority", nil, fn
       "" -> nil
       nil -> nil

@@ -7,6 +7,7 @@ defmodule SymphonyElixirWeb.TaskDashboardLive do
 
   alias SymphonyElixir.{TaskQueue, Tasks}
   import SymphonyElixirWeb.Components.Nav
+  import SymphonyElixirWeb.Components.TaskBadges
 
   @pubsub SymphonyElixir.PubSub
   @queue_topic "task_queue"
@@ -111,6 +112,7 @@ defmodule SymphonyElixirWeb.TaskDashboardLive do
                 <p class="task-card-id">TASK-<%= task.id %></p>
                 <h3 class="task-card-title"><%= task.title %></h3>
                 <p :if={task.body} class="task-card-body"><%= truncate(task.body, 120) %></p>
+                <.task_badges :if={task.local_only or task.task_group_id} task={task} class="task-card-badges" />
                 <p class="task-card-meta">
                   <%= if task.assigned_agent, do: task.assigned_agent, else: "unassigned" %>
                 </p>

@@ -8,6 +8,7 @@ defmodule SymphonyElixir.TaskQueue do
   require Logger
 
   alias SymphonyElixir.Cursor.Dispatch
+  alias SymphonyElixir.LocalDispatch
   alias SymphonyElixir.Tasks
   alias SymphonyElixir.Tasks.Task
 
@@ -171,12 +172,16 @@ defmodule SymphonyElixir.TaskQueue do
     Tasks.log_event!(task.id, "queue", batch_log_message(batch))
 
     :ok =
-      Dispatch.start_async(task.id,
-        auto_plan: true,
-        open_ide: false,
-        run_agent: true,
-        git_batch: batch
-      )
+      if task.local_only do
+        LocalDispatch.start_async(task.id, git_batch: batch)
+      else
+        Dispatch.start_async(task.id,
+          auto_plan: true,
+          open_ide: false,
+          run_agent: true,
+          git_batch: batch
+        )
+      end
 
     schedule_poll()
 

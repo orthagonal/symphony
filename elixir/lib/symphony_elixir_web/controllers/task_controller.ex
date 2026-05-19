@@ -8,6 +8,7 @@ defmodule SymphonyElixirWeb.TaskController do
   require Logger
 
   alias SymphonyElixir.Cursor.Dispatch
+  alias SymphonyElixir.LocalDispatch
   alias SymphonyElixir.Tasks
 
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
@@ -20,7 +21,7 @@ defmodule SymphonyElixirWeb.TaskController do
         maybe_start_dispatch(task.id, manual?)
 
         conn
-        |> put_flash(:info, create_flash(manual?))
+        |> put_flash(:info, create_flash(task, manual?))
         |> redirect(to: "/tasks/#{task.id}")
 
       {:error, changeset} ->
@@ -58,13 +59,17 @@ defmodule SymphonyElixirWeb.TaskController do
   @spec dispatch(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def dispatch(conn, %{"id" => id}) do
     with {task_id, ""} <- Integer.parse(id) do
-      :ok = Dispatch.start_async(task_id, dispatch_opts(conn.params))
+      task = Tasks.get!(task_id)
+
+      :ok =
+        if task.local_only do
+          LocalDispatch.start_async(task_id, [])
+        else
+          Dispatch.start_async(task_id, dispatch_opts(conn.params))
+        end
 
       conn
-      |> put_flash(
-        :info,
-        "Dispatch started: plan → workspace → headless cursor-agent. Watch the task log (may take several minutes)."
-      )
+      |> put_flash(:info, dispatch_flash(task))
       |> redirect(to: "/tasks/#{task_id}")
     else
       :error ->
@@ -75,17 +80,37 @@ defmodule SymphonyElixirWeb.TaskController do
   end
 
   defp maybe_start_dispatch(task_id, false) do
-    :ok = Dispatch.start_async(task_id, default_dispatch_opts())
+    task = Tasks.get!(task_id)
+
+    :ok =
+      if task.local_only do
+        LocalDispatch.start_async(task_id, [])
+      else
+        Dispatch.start_async(task_id, default_dispatch_opts())
+      end
   end
 
   defp maybe_start_dispatch(_task_id, true), do: :ok
 
-  defp create_flash(true),
+  defp create_flash(%{local_only: true}, true),
+    do: "Local-only task added to the queue. Click Go on the dashboard when ready."
+
+  defp create_flash(%{local_only: true}, false),
+    do: "Local-only task created — Ollama will implement in the workspace. Watch the task log."
+
+  defp create_flash(_task, true),
     do: "Task added to the queue. Click Go on the dashboard when ready."
 
-  defp create_flash(false),
+  defp create_flash(_task, false),
     do:
       "Task created — Ollama is planning and headless cursor-agent will start immediately. Watch the task log."
+
+  defp dispatch_flash(%{local_only: true}),
+    do: "Local dispatch started: Ollama will implement in the workspace. Watch the task log."
+
+  defp dispatch_flash(_task),
+    do:
+      "Dispatch started: plan → workspace → headless cursor-agent. Watch the task log (may take several minutes)."
 
   defp manual_dispatch?(params) when is_map(params) do
     not param_flag(params, "dispatch_immediately", false)
@@ -119,6 +144,11 @@ defmodule SymphonyElixirWeb.TaskController do
     |> Map.update("assigned_agent", nil, &blank_to_nil/1)
     |> Map.update("body", nil, &blank_to_nil/1)
     |> Map.update("project_path", nil, &blank_to_nil/1)
+    |> Map.update("local_only", false, fn
+      "true" -> true
+      true -> true
+      _ -> false
+    end)
   end
 
   defp normalize_priority(""), do: nil

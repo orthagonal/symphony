@@ -22,6 +22,9 @@ defmodule SymphonyElixir.Tasks.Task do
     field :queue_batch_id, :string
     field :queue_batch_index, :integer
     field :queue_batch_total, :integer
+    field :local_only, :boolean, default: false
+
+    belongs_to :task_group, SymphonyElixir.TaskGroups.TaskGroup
 
     has_many :events, SymphonyElixir.Tasks.TaskEvent
     has_one :review_ticket, SymphonyElixir.Reviews.ReviewTicket
@@ -46,11 +49,15 @@ defmodule SymphonyElixir.Tasks.Task do
       :result,
       :queue_batch_id,
       :queue_batch_index,
-      :queue_batch_total
+      :queue_batch_total,
+      :local_only,
+      :task_group_id
     ])
     |> validate_required([:title, :status])
     |> validate_inclusion(:status, @statuses)
     |> validate_inclusion(:workspace_mode, @workspace_modes)
+    |> coerce_local_only()
+    |> apply_local_only_defaults()
     |> validate_optional_priority()
     |> validate_project_path()
     |> normalize_project_path()
@@ -87,6 +94,30 @@ defmodule SymphonyElixir.Tasks.Task do
       put_change(changeset, :git_metadata, SymphonyElixir.Git.info(path))
     else
       changeset
+    end
+  end
+
+  defp apply_local_only_defaults(changeset) do
+    local? = get_change(changeset, :local_only) || get_field(changeset, :local_only)
+
+    if local? do
+      case get_change(changeset, :assigned_agent) || get_field(changeset, :assigned_agent) do
+        nil -> put_change(changeset, :assigned_agent, "ollama")
+        "" -> put_change(changeset, :assigned_agent, "ollama")
+        _ -> changeset
+      end
+    else
+      changeset
+    end
+  end
+
+  defp coerce_local_only(changeset) do
+    case get_change(changeset, :local_only) do
+      "true" -> put_change(changeset, :local_only, true)
+      "false" -> put_change(changeset, :local_only, false)
+      1 -> put_change(changeset, :local_only, true)
+      0 -> put_change(changeset, :local_only, false)
+      _ -> changeset
     end
   end
 

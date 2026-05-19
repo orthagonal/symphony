@@ -37,6 +37,8 @@ defmodule SymphonyElixirWeb.Router do
     live("/reviews/:id", ReviewsLive, :show)
     live("/tasks/new", TaskLive.New, :new)
     live("/tasks/:id", TaskLive.Show, :show)
+    live("/task-groups", TaskGroupLive.Index, :index)
+    live("/task-groups/:id", TaskGroupLive.Show, :show)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
     live("/cursor", DashboardLive, :index)

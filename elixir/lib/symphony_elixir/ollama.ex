@@ -182,6 +182,115 @@ defmodule SymphonyElixir.Ollama do
     %{summary: summary, items: checklist}
   end
 
+  @spec decompose_task_group(String.t(), keyword()) ::
+          {:ok, [%{title: String.t(), body: String.t()}]} | {:error, term()}
+  def decompose_task_group(description, opts \\ []) when is_binary(description) do
+    user = """
+    Break this large task into 3–12 small, independent subtasks suitable for a small local coding model (Ollama) to implement one at a time overnight.
+
+    Parent task:
+    #{description}
+
+    Reply with ONLY a JSON array (no markdown fences), each element:
+    {"title": "short title", "body": "detailed instructions for that subtask"}
+    """
+
+    with {:ok, text} <-
+           chat(
+             [
+               %{
+                 role: "system",
+                 content:
+                   "You decompose software tasks into ordered subtasks. Output valid JSON only."
+               },
+               %{role: "user", content: user}
+             ],
+             Keyword.merge([timeout: 180_000], opts)
+           ),
+         {:ok, chunks} <- parse_task_group_json(text) do
+      {:ok, chunks}
+    end
+  end
+
+  @spec implement_task(map(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def implement_task(task, opts \\ []) when is_map(task) do
+    workspace = task[:workspace_path] || task["workspace_path"] || "."
+    brief_path = Path.join(workspace, "SYMPHONY_TASK.md")
+
+    brief =
+      if File.exists?(brief_path) do
+        File.read!(brief_path)
+      else
+        """
+        Title: #{task[:title] || task["title"]}
+        Description:
+        #{task[:body] || task["body"] || "(none)"}
+        """
+      end
+
+    user = """
+    You are implementing a software task in the workspace at #{workspace}.
+    Read the brief below and produce a concrete implementation plan with file paths and code blocks.
+
+    If you cannot modify files directly, output each file as:
+    FILE: relative/path
+    ```
+    ...contents...
+    ```
+
+    Brief:
+    #{brief}
+    """
+
+    chat(
+      [
+        %{
+          role: "system",
+          content:
+            "You are a local coding assistant. Be specific about files and changes. Prefer small, correct diffs."
+        },
+        %{role: "user", content: user}
+      ],
+      Keyword.merge([timeout: 300_000], opts)
+    )
+  end
+
+  defp parse_task_group_json(text) when is_binary(text) do
+    json =
+      text
+      |> String.trim()
+      |> strip_json_fences()
+
+    case Jason.decode(json) do
+      {:ok, list} when is_list(list) ->
+        chunks =
+          Enum.map(list, fn
+            %{"title" => title, "body" => body} when is_binary(title) and is_binary(body) ->
+              %{title: String.trim(title), body: String.trim(body)}
+
+            _ ->
+              nil
+          end)
+          |> Enum.reject(&is_nil/1)
+
+        if chunks == [] do
+          {:error, :empty_task_group_json}
+        else
+          {:ok, chunks}
+        end
+
+      {:error, reason} ->
+        {:error, {:invalid_task_group_json, reason, text}}
+    end
+  end
+
+  defp strip_json_fences(text) do
+    text
+    |> String.replace(~r/^```(?:json)?\s*/m, "")
+    |> String.replace(~r/```\s*$/m, "")
+    |> String.trim()
+  end
+
   @spec classify_difficulty(String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def classify_difficulty(description, opts \\ []) when is_binary(description) do
     chat(

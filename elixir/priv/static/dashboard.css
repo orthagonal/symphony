@@ -428,6 +428,40 @@ pre,
   color: #4c3296;
 }
 
+.state-badge-local {
+  background: #e8f4fd;
+  border-color: #b8d9f0;
+  color: #0d4a6e;
+}
+
+.state-badge-group {
+  background: #eef8f0;
+  border-color: #b8dfc4;
+  color: #1a5c32;
+}
+
+.task-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.task-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.task-group-badge-link {
+  text-decoration: none;
+}
+
+.task-group-badge-link:hover {
+  filter: brightness(0.96);
+}
+
 .issue-id {
   font-weight: 600;
   letter-spacing: -0.01em;

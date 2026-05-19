@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
   alias SymphonyElixir.{Cursor, Cursor.WorkspaceBootstrap, Ollama, Tasks, Workspace}
   alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
+  import SymphonyElixirWeb.Components.TaskBadges
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -159,6 +160,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
             <p class="hero-copy">
               <span class={state_badge_class(@task.status)}><%= @task.status %></span>
               <%= if @task.assigned_agent, do: " · #{@task.assigned_agent}" %>
+              <.task_badges :if={@task.local_only or @task.task_group_id} task={@task} />
             </p>
           </div>
           <.agent_nav current={@page} />
@@ -226,16 +228,21 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
 
         <section class="section-card dispatch-card">
           <h2 class="section-title">Dispatch</h2>
-          <p class="section-copy">
+          <p :if={@task.local_only} class="section-copy">
+            Local-only task: runs Ollama in the workspace (no Cursor). Use queue <strong>Go</strong> or dispatch below.
+          </p>
+          <p :if={!@task.local_only} class="section-copy">
             Runs <code>cursor-agent --print --yolo</code> in the task workspace (headless). Optional: open Cursor IDE.
           </p>
           <form action={"/tasks/#{@task.id}/dispatch"} method="post" class="dispatch-form">
             <input type="hidden" name="_csrf_token" value={@csrf_token} />
-            <label class="dispatch-option">
+            <label :if={!@task.local_only} class="dispatch-option">
               <input type="checkbox" name="open_ide" value="true" />
               Also open Cursor IDE
             </label>
-            <button type="submit" class="dispatch-button">Dispatch (headless agent)</button>
+            <button type="submit" class="dispatch-button">
+              <%= if @task.local_only, do: "Dispatch (Ollama)", else: "Dispatch (headless agent)" %>
+            </button>
           </form>
           <p class="section-copy">
             Agent: <%= if @handoff.agent_path, do: @handoff.agent_path, else: "not found" %>
