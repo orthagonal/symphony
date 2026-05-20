@@ -10,6 +10,29 @@ defmodule SymphonyElixir.OSTest do
     assert {:error, {:path_not_found, ^expanded}} = OS.open_in_file_explorer(missing)
   end
 
+  test "list_folders returns only subdirectories" do
+    base = Path.join(System.tmp_dir!(), "symphony-list-#{System.unique_integer([:positive])}")
+    child = Path.join(base, "child")
+    file = Path.join(base, "notes.txt")
+
+    File.mkdir_p!(child)
+    File.write!(file, "x")
+
+    on_exit(fn -> File.rm_rf(base) end)
+
+    assert {:ok, listing} = OS.list_folders(base)
+    assert Path.expand(listing.path) == Path.expand(base)
+
+    assert [%{name: "child", path: entry_path}] = listing.entries
+    assert Path.expand(entry_path) == Path.expand(child)
+    refute Enum.any?(listing.entries, &(&1.name == "notes.txt"))
+  end
+
+  test "folder_picker_start prefers an existing directory" do
+    dir = System.tmp_dir!()
+    assert OS.folder_picker_start(dir) == Path.expand(dir)
+  end
+
   test "open_in_file_explorer accepts existing directories" do
     dir = System.tmp_dir!()
 

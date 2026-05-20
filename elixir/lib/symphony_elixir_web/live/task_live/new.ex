@@ -25,7 +25,8 @@ defmodule SymphonyElixirWeb.TaskLive.New do
      |> assign(:llm_busy, false)
      |> assign(:llm_hint, nil)
      |> assign(:group_description, "")
-     |> assign(:group_busy, false)}
+     |> assign(:group_busy, false)
+     |> assign(:folder_picker, nil)}
   end
 
   @impl true
@@ -39,24 +40,42 @@ defmodule SymphonyElixirWeb.TaskLive.New do
   end
 
   @impl true
-  def handle_event("pick_project_folder", _params, socket) do
+  def handle_event("open_folder_picker", _params, socket) do
     current = socket.assigns.form[:project_path].value
+    start = OS.folder_picker_start(current)
+    open_folder_picker(socket, start)
+  end
 
-    case OS.pick_folder(current) do
-      {:ok, path} ->
-        changeset =
-          socket.assigns.form.source
-          |> Ecto.Changeset.put_change(:project_path, path)
-          |> Map.put(:action, :validate)
+  @impl true
+  def handle_event("folder_picker_navigate", %{"path" => path}, socket) do
+    open_folder_picker(socket, path)
+  end
 
-        {:noreply, assign(socket, :form, to_form(changeset, as: :task))}
-
-      {:error, :cancelled} ->
-        {:noreply, socket}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not pick folder: #{format_pick_error(reason)}")}
+  @impl true
+  def handle_event("folder_picker_up", _params, socket) do
+    case socket.assigns.folder_picker do
+      %{parent: parent} when is_binary(parent) -> open_folder_picker(socket, parent)
+      _ -> {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("folder_picker_select", _params, socket) do
+    case socket.assigns.folder_picker do
+      %{path: path} ->
+        {:noreply,
+         socket
+         |> assign_project_path(path)
+         |> assign(:folder_picker, nil)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("folder_picker_cancel", _params, socket) do
+    {:noreply, assign(socket, :folder_picker, nil)}
   end
 
   @impl true
@@ -224,20 +243,15 @@ defmodule SymphonyElixirWeb.TaskLive.New do
               <div class="path-input-row">
                 <input
                   type="text"
-                  class="path-input"
+                  class="path-input path-input-clickable"
                   name={@form[:project_path].name}
                   value={@form[:project_path].value}
                   placeholder="C:/GitHub/my-app (leave empty for Symphony default)"
+                  phx-click="open_folder_picker"
                 />
-                <label id="project-folder-picker" class="path-folder-picker" phx-hook="FolderPicker">
+                <button type="button" class="path-folder-picker" phx-click="open_folder_picker">
                   Browse…
-                  <input
-                    type="file"
-                    class="path-folder-picker-input"
-                    webkitdirectory
-                    directory
-                  />
-                </label>
+                </button>
               </div>
               <span class="section-copy">Git branch/commit is read from this folder when you save.</span>
             </label>
@@ -325,8 +339,61 @@ defmodule SymphonyElixirWeb.TaskLive.New do
           </div>
         </.form>
       </section>
+
+      <div :if={@folder_picker} id="folder-picker-modal" class="folder-modal-overlay" phx-click="folder_picker_cancel">
+        <div class="folder-modal" onclick="event.stopPropagation()">
+          <header class="folder-modal-header">
+            <h2 class="folder-modal-title">Select project folder</h2>
+            <p class="folder-modal-path" title={@folder_picker.path}><%= @folder_picker.path %></p>
+          </header>
+          <div class="folder-modal-toolbar">
+            <button
+              type="button"
+              class="secondary folder-modal-up"
+              phx-click="folder_picker_up"
+              disabled={is_nil(@folder_picker.parent)}
+            >
+              Up
+            </button>
+          </div>
+          <ul class="folder-modal-list" role="listbox" aria-label="Folders">
+            <li :if={@folder_picker.entries == []} class="folder-modal-empty">
+              No subfolders in this directory.
+            </li>
+            <li :for={entry <- @folder_picker.entries} class="folder-modal-entry">
+              <button type="button" class="folder-entry-button" phx-click="folder_picker_navigate" phx-value-path={entry.path}>
+                <span class="folder-entry-icon" aria-hidden="true">📁</span>
+                <span class="folder-entry-name"><%= entry.name %></span>
+              </button>
+            </li>
+          </ul>
+          <footer class="folder-modal-actions">
+            <button type="button" phx-click="folder_picker_select">Select this folder</button>
+            <button type="button" class="secondary" phx-click="folder_picker_cancel">Cancel</button>
+          </footer>
+        </div>
+      </div>
     </section>
     """
+  end
+
+  defp open_folder_picker(socket, path) do
+    case OS.list_folders(path) do
+      {:ok, listing} ->
+        {:noreply, assign(socket, :folder_picker, listing)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not open folder: #{format_pick_error(reason)}")}
+    end
+  end
+
+  defp assign_project_path(socket, path) do
+    changeset =
+      socket.assigns.form.source
+      |> Ecto.Changeset.put_change(:project_path, path)
+      |> Map.put(:action, :validate)
+
+    assign(socket, :form, to_form(changeset, as: :task))
   end
 
   defp workspace_mode_label("isolated"), do: "Isolated copy (TASK-N folder, no .git)"
@@ -346,8 +413,11 @@ defmodule SymphonyElixirWeb.TaskLive.New do
   defp parse_priority(value) when is_integer(value), do: value
   defp parse_priority(_), do: 3
 
+  defp format_pick_error({:not_a_directory, path}), do: "not a directory: #{path}"
   defp format_pick_error({:command_not_found, cmd}), do: "#{cmd} not found on PATH"
   defp format_pick_error({:pick_folder_failed, status, output}), do: "exit #{status}: #{String.trim(output)}"
+  defp format_pick_error({:enoent, _}), do: "directory not found"
+  defp format_pick_error({:eacces, _}), do: "permission denied"
   defp format_pick_error(reason) when is_binary(reason), do: reason
   defp format_pick_error(%{__struct__: _} = err), do: Exception.message(err)
   defp format_pick_error(reason), do: inspect(reason)

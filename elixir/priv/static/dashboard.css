@@ -694,16 +694,112 @@ pre,
   color: var(--accent);
 }
 
-.path-folder-picker-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
+.path-input-clickable {
+  cursor: pointer;
+}
+
+.folder-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.folder-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(70vh, 520px);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg, 0 18px 40px rgba(15, 23, 42, 0.18));
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+}
+
+.folder-modal-header {
+  padding: 1rem 1.1rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.folder-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.folder-modal-path {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.folder-modal-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.65rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.folder-modal-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0.35rem 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.folder-modal-empty {
+  padding: 1rem 1.1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.folder-modal-entry {
+  margin: 0;
+}
+
+.folder-entry-button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
   border: 0;
+  background: transparent;
+  padding: 0.55rem 1.1rem;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-entry-button:hover,
+.folder-entry-button:focus-visible {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--accent);
+  outline: none;
+}
+
+.folder-entry-icon {
+  flex: none;
+}
+
+.folder-entry-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.85rem 1.1rem;
+  border-top: 1px solid var(--line);
 }
 
 .form-actions {
