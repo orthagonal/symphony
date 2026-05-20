@@ -3,6 +3,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
+  alias SymphonyElixir.Repo
   alias SymphonyElixir.{Cursor, Cursor.WorkspaceBootstrap, Ollama, Tasks, Workspace}
   alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
@@ -22,6 +23,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
          |> assign(:llm_busy, false)
          |> assign(:llm_output, nil)
          |> assign(:note, "")
+         |> assign(:editing, false)
          |> load_task()}
 
       _ ->
@@ -29,6 +31,51 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
          socket
          |> put_flash(:error, "Invalid task id")
          |> push_navigate(to: "/")}
+    end
+  end
+
+  @impl true
+  def handle_event("edit", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:editing, true)
+     |> assign_edit_form()}
+  end
+
+  @impl true
+  def handle_event("cancel_edit", _params, socket) do
+    {:noreply, assign(socket, :editing, false)}
+  end
+
+  @impl true
+  def handle_event("validate", %{"task" => params}, socket) do
+    changeset =
+      socket.assigns.task
+      |> Task.changeset(normalize_params(params))
+      |> Map.put(:action, :validate)
+
+    {:noreply, assign(socket, :form, to_form(changeset, as: :task))}
+  end
+
+  @impl true
+  def handle_event("save", %{"task" => params}, socket) do
+    params = normalize_params(params)
+
+    case socket.assigns.task |> Task.changeset(params) |> Repo.update() do
+      {:ok, task} ->
+        _ = Tasks.log_event!(task.id, "updated", "Task fields updated")
+
+        {:noreply,
+         socket
+         |> assign(:editing, false)
+         |> put_flash(:info, "Task saved")
+         |> load_task()}
+
+      {:error, changeset} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Fix the errors below")
+         |> assign(:form, to_form(changeset, as: :task, action: :update))}
     end
   end
 
@@ -123,8 +170,13 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
 
   @impl true
   def handle_info(:refresh_task, socket) do
-    schedule_refresh()
-    {:noreply, load_task(socket)}
+    if socket.assigns.editing do
+      schedule_refresh()
+      {:noreply, socket}
+    else
+      schedule_refresh()
+      {:noreply, load_task(socket)}
+    end
   end
 
   @impl true
@@ -168,31 +220,123 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
       </header>
 
       <div class="detail-grid">
-        <section class="section-card">
-          <h2 class="section-title">Project</h2>
-          <p class="mono workspace-path">
-            <%= @task.project_path || "Default (WORKFLOW seed_path)" %>
-          </p>
-          <p class="section-copy">
-            Mode: <strong><%= @task.workspace_mode %></strong>
-            <%= if @task.workspace_path do %>
-              · Workspace: <%= @task.workspace_path %>
-            <% end %>
-          </p>
-          <p class="section-copy">
-            <strong>Git:</strong> <%= SymphonyElixir.Git.format_summary(@task.git_metadata) %>
-          </p>
-          <pre :if={@task.git_metadata} class="llm-box"><%= format_git_metadata(@task.git_metadata) %></pre>
-        </section>
+        <section class="section-card form-span-all">
+          <div class="form-actions" style="margin-bottom: 1rem;">
+            <h2 class="section-title" style="margin: 0; flex: 1;">Task details</h2>
+            <button :if={!@editing} type="button" class="secondary" phx-click="edit">
+              Edit task
+            </button>
+          </div>
 
-        <section class="section-card">
-          <h2 class="section-title">Description</h2>
-          <pre class="task-body"><%= @task.body || "No description." %></pre>
-          <p :if={@task.result} class="task-result">
-            <strong>Result:</strong> <%= @task.result %>
-          </p>
+          <div :if={!@editing}>
+            <p class="section-copy">
+              <strong>Priority:</strong> <%= @task.priority || "—" %>
+              · <strong>Status:</strong> <%= @task.status %>
+            </p>
+            <p class="mono workspace-path">
+              <%= @task.project_path || "Default (WORKFLOW seed_path)" %>
+            </p>
+            <p class="section-copy">
+              Mode: <strong><%= @task.workspace_mode %></strong>
+              <%= if @task.workspace_path do %>
+                · Workspace: <%= @task.workspace_path %>
+              <% end %>
+            </p>
+            <p class="section-copy">
+              <strong>Git:</strong> <%= SymphonyElixir.Git.format_summary(@task.git_metadata) %>
+            </p>
+            <pre :if={@task.git_metadata} class="llm-box"><%= format_git_metadata(@task.git_metadata) %></pre>
+            <pre class="task-body"><%= @task.body || "No description." %></pre>
+            <p :if={@task.result} class="task-result">
+              <strong>Result:</strong> <%= @task.result %>
+            </p>
+            <p :if={@task.local_only} class="section-copy">Local only (Ollama)</p>
+          </div>
 
-          <div class="status-actions">
+          <.form
+            :if={@editing}
+            for={@form}
+            id="task-edit-form"
+            phx-change="validate"
+            phx-submit="save"
+          >
+            <div class="form-grid">
+              <label>
+                <span>Title</span>
+                <input type="text" name={@form[:title].name} value={@form[:title].value} required />
+                <span :for={msg <- @form[:title].errors} class="field-error"><%= msg %></span>
+              </label>
+              <label>
+                <span>Priority (1–4)</span>
+                <input
+                  type="number"
+                  name={@form[:priority].name}
+                  value={@form[:priority].value}
+                  min="1"
+                  max="4"
+                />
+              </label>
+              <label class="form-span-all">
+                <span>Project folder</span>
+                <input
+                  type="text"
+                  name={@form[:project_path].name}
+                  value={@form[:project_path].value}
+                  placeholder="C:/GitHub/my-app (leave empty for Symphony default)"
+                />
+                <span :for={msg <- @form[:project_path].errors} class="field-error"><%= msg %></span>
+                <span class="section-copy">Git metadata refreshes when you save.</span>
+              </label>
+              <label>
+                <span>Workspace mode</span>
+                <select name={@form[:workspace_mode].name}>
+                  <option
+                    :for={mode <- Task.workspace_modes()}
+                    value={mode}
+                    selected={@form[:workspace_mode].value == mode}
+                  >
+                    <%= workspace_mode_label(mode) %>
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span>Status</span>
+                <select name={@form[:status].name}>
+                  <option :for={s <- Task.statuses()} value={s} selected={@form[:status].value == s}>
+                    <%= s %>
+                  </option>
+                </select>
+              </label>
+              <label class="form-span-all">
+                <span>Description</span>
+                <textarea name={@form[:body].name} rows="8">{@form[:body].value}</textarea>
+              </label>
+              <label>
+                <span>Assigned agent</span>
+                <input
+                  type="text"
+                  name={@form[:assigned_agent].name}
+                  value={@form[:assigned_agent].value}
+                  placeholder="cursor"
+                />
+              </label>
+              <label class="form-span-all dispatch-option">
+                <input
+                  type="checkbox"
+                  name={@form[:local_only].name}
+                  value="true"
+                  checked={@form[:local_only].value in [true, "true"]}
+                />
+                <span>Local only (Ollama — never Cursor/cursor-agent)</span>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="submit">Save changes</button>
+              <button type="button" class="secondary" phx-click="cancel_edit">Cancel</button>
+            </div>
+          </.form>
+
+          <div :if={!@editing} class="status-actions">
             <button
               :for={status <- Task.statuses()}
               type="button"
@@ -306,9 +450,22 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
   defp load_task(socket) do
     task = Tasks.get_with_events!(socket.assigns.task_id)
 
-    socket
-    |> assign(:task, task)
-    |> assign(:handoff, handoff_for(task))
+    socket =
+      socket
+      |> assign(:task, task)
+      |> assign(:handoff, handoff_for(task))
+
+    if socket.assigns.editing do
+      assign_edit_form(socket, task)
+    else
+      socket
+    end
+  end
+
+  defp assign_edit_form(socket, task \\ nil) do
+    task = task || socket.assigns.task
+    changeset = Task.changeset(task, %{})
+    assign(socket, :form, to_form(changeset, as: :task))
   end
 
   defp handoff_for(task) do
@@ -339,6 +496,36 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
      |> assign(:llm_busy, true)
      |> assign(:llm_output, "Waiting for Ollama…")}
   end
+
+  defp workspace_mode_label("isolated"), do: "Isolated copy (TASK-N folder, no .git)"
+  defp workspace_mode_label("linked"), do: "Linked (work directly in project folder)"
+  defp workspace_mode_label(other), do: other
+
+  defp normalize_params(params) when is_map(params) do
+    params
+    |> Map.update("local_only", false, fn
+      "true" -> true
+      true -> true
+      _ -> false
+    end)
+    |> Map.update("priority", nil, fn
+      "" -> nil
+      nil -> nil
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {int, ""} -> int
+          _ -> value
+        end
+
+      value ->
+        value
+    end)
+    |> Map.update("project_path", nil, &blank_to_nil/1)
+    |> Map.update("assigned_agent", nil, &blank_to_nil/1)
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp state_badge_class(status) do
     "state-badge state-badge-" <> String.replace(status, " ", "-")
