@@ -31,7 +31,19 @@ defmodule SymphonyElixirWeb.Layouts do
             var liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
               params: {_csrf_token: csrfToken},
               timeout: 60000,
-              longPollFallbackMs: 2500
+              longPollFallbackMs: 2500,
+              hooks: {
+                FolderPicker: {
+                  mounted: function () {
+                    var browse = this.el;
+
+                    browse.addEventListener("click", function (event) {
+                      event.preventDefault();
+                      this.pushEvent("pick_project_folder", {});
+                    }.bind(this));
+                  }
+                }
+              }
             });
 
             liveSocket.connect();

@@ -5,7 +5,7 @@ defmodule SymphonyElixirWeb.TaskLive.New do
 
   require Logger
 
-  alias SymphonyElixir.{Ollama, TaskGroups, Tasks}
+  alias SymphonyElixir.{Ollama, OS, TaskGroups, Tasks}
   alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
 
@@ -36,6 +36,27 @@ defmodule SymphonyElixirWeb.TaskLive.New do
       |> Map.put(:action, :validate)
 
     {:noreply, assign(socket, :form, to_form(changeset, as: :task))}
+  end
+
+  @impl true
+  def handle_event("pick_project_folder", _params, socket) do
+    current = socket.assigns.form[:project_path].value
+
+    case OS.pick_folder(current) do
+      {:ok, path} ->
+        changeset =
+          socket.assigns.form.source
+          |> Ecto.Changeset.put_change(:project_path, path)
+          |> Map.put(:action, :validate)
+
+        {:noreply, assign(socket, :form, to_form(changeset, as: :task))}
+
+      {:error, :cancelled} ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not pick folder: #{format_pick_error(reason)}")}
+    end
   end
 
   @impl true
@@ -114,27 +135,6 @@ defmodule SymphonyElixirWeb.TaskLive.New do
   end
 
   @impl true
-  def handle_info({:task_group_done, {:ok, group, tasks}}, socket) do
-    count = length(tasks)
-    local_only = socket.assigns.form[:local_only].value in [true, "true"]
-    dispatch = if local_only, do: "local-only (Ollama)", else: "Cursor"
-
-    {:noreply,
-     socket
-     |> assign(:group_busy, false)
-     |> assign(:llm_hint, "Created group ##{group.id} with #{count} #{dispatch} tasks")
-     |> push_navigate(to: "/task-groups/#{group.id}")}
-  end
-
-  @impl true
-  def handle_info({:task_group_done, {:error, reason}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:group_busy, false)
-     |> assign(:llm_hint, "Task group failed: #{format_error(reason)}")}
-  end
-
-  @impl true
   def handle_event("classify", %{"task" => params}, socket) do
     description = "#{params["title"]}\n#{params["body"]}"
 
@@ -156,6 +156,27 @@ defmodule SymphonyElixirWeb.TaskLive.New do
     Logger.warning("TaskLive.New unhandled event=#{event} params=#{inspect(params)}")
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:task_group_done, {:ok, group, tasks}}, socket) do
+    count = length(tasks)
+    local_only = socket.assigns.form[:local_only].value in [true, "true"]
+    dispatch = if local_only, do: "local-only (Ollama)", else: "Cursor"
+
+    {:noreply,
+     socket
+     |> assign(:group_busy, false)
+     |> assign(:llm_hint, "Created group ##{group.id} with #{count} #{dispatch} tasks")
+     |> push_navigate(to: "/task-groups/#{group.id}")}
+  end
+
+  @impl true
+  def handle_info({:task_group_done, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:group_busy, false)
+     |> assign(:llm_hint, "Task group failed: #{format_error(reason)}")}
   end
 
   @impl true
@@ -200,12 +221,24 @@ defmodule SymphonyElixirWeb.TaskLive.New do
             </label>
             <label class="form-span-all">
               <span>Project folder</span>
-              <input
-                type="text"
-                name={@form[:project_path].name}
-                value={@form[:project_path].value}
-                placeholder="C:/GitHub/my-app (leave empty for Symphony default)"
-              />
+              <div class="path-input-row">
+                <input
+                  type="text"
+                  class="path-input"
+                  name={@form[:project_path].name}
+                  value={@form[:project_path].value}
+                  placeholder="C:/GitHub/my-app (leave empty for Symphony default)"
+                />
+                <label id="project-folder-picker" class="path-folder-picker" phx-hook="FolderPicker">
+                  Browse…
+                  <input
+                    type="file"
+                    class="path-folder-picker-input"
+                    webkitdirectory
+                    directory
+                  />
+                </label>
+              </div>
               <span class="section-copy">Git branch/commit is read from this folder when you save.</span>
             </label>
             <label>
@@ -312,6 +345,12 @@ defmodule SymphonyElixirWeb.TaskLive.New do
 
   defp parse_priority(value) when is_integer(value), do: value
   defp parse_priority(_), do: 3
+
+  defp format_pick_error({:command_not_found, cmd}), do: "#{cmd} not found on PATH"
+  defp format_pick_error({:pick_folder_failed, status, output}), do: "exit #{status}: #{String.trim(output)}"
+  defp format_pick_error(reason) when is_binary(reason), do: reason
+  defp format_pick_error(%{__struct__: _} = err), do: Exception.message(err)
+  defp format_pick_error(reason), do: inspect(reason)
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(%{__struct__: _} = err), do: Exception.message(err)
