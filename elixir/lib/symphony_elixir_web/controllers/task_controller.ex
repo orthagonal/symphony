@@ -7,9 +7,7 @@ defmodule SymphonyElixirWeb.TaskController do
 
   require Logger
 
-  alias SymphonyElixir.Cursor.Dispatch
-  alias SymphonyElixir.LocalDispatch
-  alias SymphonyElixir.Tasks
+  alias SymphonyElixir.{AgentBackend, AgentDispatch, Tasks}
 
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, %{"task" => task_params} = params) do
@@ -61,12 +59,7 @@ defmodule SymphonyElixirWeb.TaskController do
     with {task_id, ""} <- Integer.parse(id) do
       task = Tasks.get!(task_id)
 
-      :ok =
-        if task.local_only do
-          LocalDispatch.start_async(task_id, [])
-        else
-          Dispatch.start_async(task_id, dispatch_opts(conn.params))
-        end
+      :ok = AgentDispatch.start_async(task_id, dispatch_opts(conn.params, task))
 
       conn
       |> put_flash(:info, dispatch_flash(task))
@@ -82,12 +75,7 @@ defmodule SymphonyElixirWeb.TaskController do
   defp maybe_start_dispatch(task_id, false) do
     task = Tasks.get!(task_id)
 
-    :ok =
-      if task.local_only do
-        LocalDispatch.start_async(task_id, [])
-      else
-        Dispatch.start_async(task_id, default_dispatch_opts())
-      end
+    :ok = AgentDispatch.start_async(task_id, default_dispatch_opts(task))
   end
 
   defp maybe_start_dispatch(_task_id, true), do: :ok
@@ -98,34 +86,38 @@ defmodule SymphonyElixirWeb.TaskController do
   defp create_flash(%{local_only: true}, false),
     do: "Local-only task created — Ollama will implement in the workspace. Watch the task log."
 
-  defp create_flash(_task, true),
-    do: "Task added to the queue. Click Go on the dashboard when ready."
+  defp create_flash(task, true),
+    do: "Task added to the queue (#{AgentBackend.label(AgentBackend.resolve(task))}). Click Go when ready."
 
-  defp create_flash(_task, false),
+  defp create_flash(task, false),
     do:
-      "Task created — Ollama is planning and headless cursor-agent will start immediately. Watch the task log."
+      "Task created — planning with Ollama, then #{AgentBackend.label(AgentBackend.resolve(task))}. Watch the task log."
 
-  defp dispatch_flash(%{local_only: true}),
-    do: "Local dispatch started: Ollama will implement in the workspace. Watch the task log."
-
-  defp dispatch_flash(_task),
+  defp dispatch_flash(task),
     do:
-      "Dispatch started: plan → workspace → headless cursor-agent. Watch the task log (may take several minutes)."
+      "Dispatch started (#{AgentBackend.label(AgentBackend.resolve(task))}): plan → workspace → agent. Watch the task log."
 
   defp manual_dispatch?(params) when is_map(params) do
     not param_flag(params, "dispatch_immediately", false)
   end
 
-  defp default_dispatch_opts do
-    [auto_plan: true, open_ide: false, run_agent: true]
+  defp default_dispatch_opts(task) do
+    base = [auto_plan: true, run_agent: true]
+    if AgentBackend.resolve(task) == "cursor", do: Keyword.put(base, :open_ide, false), else: base
   end
 
-  defp dispatch_opts(params) when is_map(params) do
-    Keyword.merge(default_dispatch_opts(),
-      auto_plan: param_flag(params, "auto_plan", true),
-      open_ide: param_flag(params, "open_ide", false),
-      run_agent: param_flag(params, "run_agent", true)
-    )
+  defp dispatch_opts(params, task) when is_map(params) do
+    opts =
+      Keyword.merge(default_dispatch_opts(task),
+        auto_plan: param_flag(params, "auto_plan", true),
+        run_agent: param_flag(params, "run_agent", true)
+      )
+
+    if AgentBackend.resolve(task) == "cursor" do
+      Keyword.put(opts, :open_ide, param_flag(params, "open_ide", false))
+    else
+      opts
+    end
   end
 
   defp param_flag(params, key, default) do

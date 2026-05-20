@@ -281,12 +281,16 @@ defmodule SymphonyElixirWeb.TaskLive.New do
             </label>
             <label>
               <span>Assigned agent</span>
-              <input
-                type="text"
-                name={@form[:assigned_agent].name}
-                value={@form[:assigned_agent].value}
-                placeholder="cursor"
-              />
+              <select name={@form[:assigned_agent].name}>
+                <option value="">cursor (default)</option>
+                <option
+                  :for={backend <- Task.agent_backends()}
+                  value={backend}
+                  selected={@form[:assigned_agent].value == backend}
+                >
+                  <%= SymphonyElixir.AgentBackend.label(backend) %>
+                </option>
+              </select>
             </label>
             <label class="form-span-all dispatch-option">
               <input type="checkbox" name="dispatch_immediately" value="true" />
@@ -299,7 +303,7 @@ defmodule SymphonyElixirWeb.TaskLive.New do
                 value="true"
                 checked={@form[:local_only].value in [true, "true"]}
               />
-              <span>Local only (Ollama — never Cursor/cursor-agent)</span>
+              <span>Local only (Ollama — ignores agent selection above)</span>
             </label>
           </div>
           <p class="section-copy form-span-all">
@@ -319,7 +323,7 @@ defmodule SymphonyElixirWeb.TaskLive.New do
         <h2 class="section-title">Generate task group</h2>
         <p class="section-copy">
           Uses Ollama to split a large task into smaller subtasks. With <strong>Local only</strong> checked above,
-          children run via Ollama only; otherwise they use Cursor/cursor-agent like a normal task.
+          children run via Ollama only; otherwise they use the selected agent backend (Cursor, Codex, or Zed).
           Project folder, workspace mode, and assigned agent above apply to every child task.
         </p>
         <.form for={@form} id="task-group-form" phx-submit="generate_task_group">

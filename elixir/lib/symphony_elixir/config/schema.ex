@@ -265,6 +265,70 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule Zed do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:command, :string, default: "eval-cli")
+      field(:model, :string, default: "anthropic/claude-sonnet-4-6-latest")
+      field(:timeout_seconds, :integer, default: 3600)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:command, :model, :timeout_seconds], empty_values: [])
+      |> validate_required([:command, :model])
+      |> validate_number(:timeout_seconds, greater_than: 0)
+    end
+  end
+
+  defmodule Electron do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:game_folder, :string)
+      field(:game_name, :string)
+      field(:compile_script, :string, default: "scripts/compileGame")
+      field(:npm_command, :string, default: "npm run electron")
+      field(:main_inspect_port, :integer, default: 9229)
+      field(:remote_debug_port, :integer, default: 9222)
+      field(:build_timeout_ms, :integer, default: 600_000)
+      field(:startup_timeout_ms, :integer, default: 120_000)
+      field(:log_dir, :string, default: "debug")
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(
+        attrs,
+        [
+          :game_folder,
+          :game_name,
+          :compile_script,
+          :npm_command,
+          :main_inspect_port,
+          :remote_debug_port,
+          :build_timeout_ms,
+          :startup_timeout_ms,
+          :log_dir
+        ],
+        empty_values: []
+      )
+      |> validate_number(:main_inspect_port, greater_than: 0)
+      |> validate_number(:remote_debug_port, greater_than: 0)
+      |> validate_number(:build_timeout_ms, greater_than: 0)
+      |> validate_number(:startup_timeout_ms, greater_than: 0)
+    end
+  end
+
   embedded_schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
@@ -272,9 +336,11 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:zed, Zed, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:electron, Electron, on_replace: :update, defaults_to_struct: true)
   end
 
   @spec parse(map()) :: {:ok, %__MODULE__{}} | {:error, {:invalid_workflow_config, String.t()}}
@@ -364,9 +430,11 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:worker, with: &Worker.changeset/2)
     |> cast_embed(:agent, with: &Agent.changeset/2)
     |> cast_embed(:codex, with: &Codex.changeset/2)
+    |> cast_embed(:zed, with: &Zed.changeset/2)
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
+    |> cast_embed(:electron, with: &Electron.changeset/2)
   end
 
   defp finalize_settings(settings) do
@@ -394,7 +462,12 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    electron = %{
+      settings.electron
+      | game_folder: resolve_optional_path(settings.electron.game_folder)
+    }
+
+    %{settings | tracker: tracker, workspace: workspace, codex: codex, zed: settings.zed, electron: electron}
   end
 
   defp normalize_keys(value) when is_map(value) do

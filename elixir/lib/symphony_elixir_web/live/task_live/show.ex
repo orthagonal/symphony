@@ -4,7 +4,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.Repo
-  alias SymphonyElixir.{Cursor, Cursor.WorkspaceBootstrap, Ollama, Tasks, Workspace}
+  alias SymphonyElixir.{AgentBackend, AgentDispatch, Cursor, Cursor.WorkspaceBootstrap, OS, Ollama, Tasks, Workspace}
   alias SymphonyElixir.Tasks.Task
   import SymphonyElixirWeb.Components.Nav
   import SymphonyElixirWeb.Components.TaskBadges
@@ -135,6 +135,28 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
   end
 
   @impl true
+  def handle_event("open_in_explorer", _params, socket) do
+    task = socket.assigns.task
+
+    case task.workspace_path do
+      path when is_binary(path) and path != "" ->
+        case OS.open_in_file_explorer(path) do
+          :ok ->
+            _ = Tasks.log_event!(task.id, "explorer", "Opened workspace in File Explorer")
+
+            {:noreply, put_flash(socket, :info, "Opened in File Explorer")}
+
+          {:error, reason} ->
+            {:noreply,
+             put_flash(socket, :error, "Could not open File Explorer: #{inspect(reason)}")}
+        end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "Prepare workspace first")}
+    end
+  end
+
+  @impl true
   def handle_event("open_in_cursor", _params, socket) do
     task = socket.assigns.task
 
@@ -239,7 +261,15 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
             <p class="section-copy">
               Mode: <strong><%= @task.workspace_mode %></strong>
               <%= if @task.workspace_path do %>
-                · Workspace: <%= @task.workspace_path %>
+                · Workspace:
+                <button
+                  type="button"
+                  class="path-link"
+                  phx-click="open_in_explorer"
+                  title="Open in File Explorer"
+                >
+                  <%= @task.workspace_path %>
+                </button>
               <% end %>
             </p>
             <p class="section-copy">
@@ -313,12 +343,16 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
               </label>
               <label>
                 <span>Assigned agent</span>
-                <input
-                  type="text"
-                  name={@form[:assigned_agent].name}
-                  value={@form[:assigned_agent].value}
-                  placeholder="cursor"
-                />
+                <select name={@form[:assigned_agent].name}>
+                  <option value="">cursor (default)</option>
+                  <option
+                    :for={backend <- Task.agent_backends()}
+                    value={backend}
+                    selected={@form[:assigned_agent].value == backend}
+                  >
+                    <%= AgentBackend.label(backend) %>
+                  </option>
+                </select>
               </label>
               <label class="form-span-all dispatch-option">
                 <input
@@ -327,7 +361,7 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
                   value="true"
                   checked={@form[:local_only].value in [true, "true"]}
                 />
-                <span>Local only (Ollama — never Cursor/cursor-agent)</span>
+                <span>Local only (Ollama — ignores agent selection)</span>
               </label>
             </div>
             <div class="form-actions">
@@ -372,31 +406,32 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
 
         <section class="section-card dispatch-card">
           <h2 class="section-title">Dispatch</h2>
-          <p :if={@task.local_only} class="section-copy">
-            Local-only task: runs Ollama in the workspace (no Cursor). Use queue <strong>Go</strong> or dispatch below.
+          <p class="section-copy">
+            Backend: <strong><%= AgentBackend.label(@resolved_agent) %></strong>
+            <%= if @task.local_only, do: " (local only overrides selection)" %>
           </p>
-          <p :if={!@task.local_only} class="section-copy">
-            Runs <code>cursor-agent --print --yolo</code> in the task workspace (headless). Optional: open Cursor IDE.
-          </p>
+          <p class="section-copy"><%= @dispatch_hint %></p>
           <form action={"/tasks/#{@task.id}/dispatch"} method="post" class="dispatch-form">
             <input type="hidden" name="_csrf_token" value={@csrf_token} />
-            <label :if={!@task.local_only} class="dispatch-option">
+            <label :if={@resolved_agent == "cursor" and !@task.local_only} class="dispatch-option">
               <input type="checkbox" name="open_ide" value="true" />
               Also open Cursor IDE
             </label>
             <button type="submit" class="dispatch-button">
-              <%= if @task.local_only, do: "Dispatch (Ollama)", else: "Dispatch (headless agent)" %>
+              Dispatch (<%= @resolved_agent %>)
             </button>
           </form>
-          <p class="section-copy">
-            Agent: <%= if @handoff.agent_path, do: @handoff.agent_path, else: "not found" %>
-            · Auth: <%= if @handoff.agent_authenticated, do: "logged in", else: "not logged in" %>
+          <p :if={@handoff.agent_path} class="section-copy">
+            CLI: <span class="mono"><%= @handoff.agent_path %></span>
+            · Auth: <%= if @handoff.agent_authenticated == :ok, do: "ready", else: "check setup" %>
           </p>
-          <p :if={!@handoff.agent_installed} class="section-copy">
-            Install Cursor Agent:
-            <code>irm https://cursor.com/install?win32=true | iex</code>
+          <p :if={!@handoff.agent_installed} class="section-copy dispatch-warning">
+            <%= @handoff.instructions %>
           </p>
-          <p :if={@handoff.agent_installed and !@handoff.agent_authenticated} class="section-copy dispatch-warning">
+          <p
+            :if={@handoff.agent_installed and @handoff.agent_authenticated != :ok and @resolved_agent == "cursor"}
+            class="section-copy dispatch-warning"
+          >
             <strong>cursor-agent auth check failed.</strong>
             Run <code>cursor-agent.cmd login</code> in PowerShell, restart Symphony, refresh this page.
           </p>
@@ -415,8 +450,25 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
             >
               Open in Cursor
             </button>
+            <button
+              :if={@task.workspace_path}
+              type="button"
+              class="secondary"
+              phx-click="open_in_explorer"
+            >
+              Open in Explorer
+            </button>
           </div>
-          <p :if={@handoff.workspace_path} class="mono workspace-path"><%= @handoff.workspace_path %></p>
+          <p :if={@handoff.workspace_path} class="mono workspace-path">
+            <button
+              type="button"
+              class="path-link"
+              phx-click="open_in_explorer"
+              title="Open in File Explorer"
+            >
+              <%= @handoff.workspace_path %>
+            </button>
+          </p>
           <p :if={@handoff.workspace_file} class="mono"><%= @handoff.workspace_file %></p>
           <pre class="llm-box"><%= @handoff.instructions %></pre>
           <p :if={@handoff.open_command} class="mono"><%= @handoff.open_command %></p>
@@ -450,10 +502,14 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
   defp load_task(socket) do
     task = Tasks.get_with_events!(socket.assigns.task_id)
 
+    resolved = AgentBackend.resolve(task)
+
     socket =
       socket
       |> assign(:task, task)
-      |> assign(:handoff, handoff_for(task))
+      |> assign(:resolved_agent, resolved)
+      |> assign(:dispatch_hint, dispatch_hint(resolved, task))
+      |> assign(:handoff, handoff_for(task, resolved))
 
     if socket.assigns.editing do
       assign_edit_form(socket, task)
@@ -468,12 +524,30 @@ defmodule SymphonyElixirWeb.TaskLive.Show do
     assign(socket, :form, to_form(changeset, as: :task))
   end
 
-  defp handoff_for(task) do
-    Cursor.handoff(%{
+  defp handoff_for(task, resolved_agent) do
+    AgentDispatch.handoff(%{
       workspace_path: task.workspace_path,
-      identifier: "TASK-#{task.id}"
+      identifier: "TASK-#{task.id}",
+      backend: resolved_agent
     })
   end
+
+  defp dispatch_hint("ollama", %{local_only: true}),
+    do: "Runs Ollama in the workspace. Use queue Go or dispatch below."
+
+  defp dispatch_hint("ollama", _),
+    do: "Runs Ollama chat completion in the workspace (no external agent CLI)."
+
+  defp dispatch_hint("codex", _),
+    do: "Runs `codex app-server` in the workspace (same stack as the Codex orchestrator)."
+
+  defp dispatch_hint("zed", _),
+    do: "Runs Zed `eval-cli` headless agent. Requires eval-cli on PATH or ZED_COMMAND."
+
+  defp dispatch_hint("cursor", _),
+    do: "Runs `cursor-agent --print --yolo` in the task workspace. Optional: open Cursor IDE."
+
+  defp dispatch_hint(_, _), do: "Dispatch runs the selected agent in the workspace."
 
   defp run_llm(socket, kind) do
     task = socket.assigns.task

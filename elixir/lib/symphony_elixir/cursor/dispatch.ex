@@ -5,7 +5,7 @@ defmodule SymphonyElixir.Cursor.Dispatch do
 
   require Logger
 
-  alias SymphonyElixir.{Cursor, LocalDispatch, Ollama, Tasks, Workspace}
+  alias SymphonyElixir.{AgentBackend, Cursor, Ollama, Tasks, Workspace}
   alias SymphonyElixir.Cursor.WorkspaceBootstrap
   alias SymphonyElixir.Tasks.Task
 
@@ -31,12 +31,7 @@ defmodule SymphonyElixir.Cursor.Dispatch do
   @spec run(integer(), keyword()) :: {:ok, Task.t()} | {:error, term()}
   def run(task_id, opts \\ []) when is_integer(task_id) do
     task = Tasks.get_with_events!(task_id)
-
-    if task.local_only do
-      LocalDispatch.run(task_id, opts)
-    else
-      run_remote(task_id, opts, task)
-    end
+    run_remote(task_id, opts, task)
   end
 
   defp run_remote(_task_id, opts, task) do
@@ -105,11 +100,13 @@ defmodule SymphonyElixir.Cursor.Dispatch do
       end
     end
 
-    Tasks.update_status!(task.id, "assigned")
-    |> then(fn updated ->
-      safe_log(updated.id, "dispatch", "Dispatch complete — check Log and Cursor window")
-      Tasks.get_with_events!(updated.id)
-    end)
+    updated =
+      task.id
+      |> Tasks.update_status!("assigned")
+      |> then(fn t -> Tasks.update!(t.id, %{assigned_agent: AgentBackend.default()}) end)
+
+    safe_log(updated.id, "dispatch", "Dispatch complete — check Log and Cursor window")
+    Tasks.get_with_events!(updated.id)
   end
 
   defp maybe_plan(task, false), do: {:ok, task}

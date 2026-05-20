@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Tasks.Task do
 
   @statuses ~w(queued assigned running waiting blocked review done failed cancelled)
   @workspace_modes ~w(isolated linked)
+  @agent_backends ~w(cursor ollama codex zed)
 
   schema "tasks" do
     field :title, :string
@@ -56,6 +57,8 @@ defmodule SymphonyElixir.Tasks.Task do
     |> validate_required([:title, :status])
     |> validate_inclusion(:status, @statuses)
     |> validate_inclusion(:workspace_mode, @workspace_modes)
+    |> normalize_assigned_agent()
+    |> validate_assigned_agent()
     |> coerce_local_only()
     |> apply_local_only_defaults()
     |> validate_optional_priority()
@@ -136,4 +139,30 @@ defmodule SymphonyElixir.Tasks.Task do
 
   @spec workspace_modes() :: [String.t()]
   def workspace_modes, do: @workspace_modes
+
+  @spec agent_backends() :: [String.t()]
+  def agent_backends, do: @agent_backends
+
+  defp normalize_assigned_agent(changeset) do
+    case get_change(changeset, :assigned_agent) || get_field(changeset, :assigned_agent) do
+      nil ->
+        changeset
+
+      agent when is_binary(agent) ->
+        put_change(changeset, :assigned_agent, SymphonyElixir.AgentBackend.normalize(agent))
+
+      _ ->
+        changeset
+    end
+  end
+
+  defp validate_assigned_agent(changeset) do
+    validate_change(changeset, :assigned_agent, fn :assigned_agent, agent ->
+      cond do
+        is_nil(agent) -> []
+        agent in @agent_backends -> []
+        true -> [assigned_agent: "must be one of: #{Enum.join(@agent_backends, ", ")}"]
+      end
+    end)
+  end
 end
