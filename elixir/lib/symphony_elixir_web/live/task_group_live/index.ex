@@ -13,7 +13,8 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Index do
      socket
      |> assign(:page, :task_groups)
      |> assign(:groups, TaskGroups.list_all())
-     |> assign(:counts, TaskGroups.task_counts())}
+     |> assign(:counts, TaskGroups.task_counts())
+     |> assign(:local_only_groups, TaskGroups.local_only_group_ids())}
   end
 
   @impl true
@@ -26,7 +27,7 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Index do
             <p class="eyebrow">Overnight</p>
             <h1 class="hero-title">Task groups</h1>
             <p class="hero-copy">
-              Batched local-only subtasks generated from a parent description.
+              Batched subtasks generated from a parent description (Ollama split; local-only or Cursor per group).
             </p>
           </div>
           <.agent_nav current={@page} />
@@ -46,7 +47,7 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Index do
               <p class="task-card-meta">
                 <%= Map.get(@counts, group.id, 0) %> tasks · <%= group.status %>
               </p>
-              <span class="task-card-badges">
+              <span :if={MapSet.member?(@local_only_groups, group.id)} class="task-card-badges">
                 <.local_only_badge />
               </span>
             </a>

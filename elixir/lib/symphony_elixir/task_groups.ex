@@ -1,6 +1,9 @@
 defmodule SymphonyElixir.TaskGroups do
   @moduledoc """
-  Overnight task groups: a parent description decomposed into local-only child tasks.
+  Task groups: a parent description decomposed into child tasks via Ollama.
+
+  Child tasks are local-only (Ollama) when `local_only: true` is passed; otherwise they
+  use Cursor/cursor-agent like ordinary tasks.
   """
 
   import Ecto.Query
@@ -50,6 +53,8 @@ defmodule SymphonyElixir.TaskGroups do
     project_path = Keyword.get(opts, :project_path)
     workspace_mode = Keyword.get(opts, :workspace_mode, "isolated")
     priority = Keyword.get(opts, :priority, 3)
+    local_only = Keyword.get(opts, :local_only, false)
+    assigned_agent = Keyword.get(opts, :assigned_agent)
 
     with {:ok, chunks} <- Ollama.decompose_task_group(description),
          {:ok, group} <- create(%{title: title, description: description, status: "active"}),
@@ -57,29 +62,49 @@ defmodule SymphonyElixir.TaskGroups do
            insert_child_tasks(group, chunks,
              project_path: project_path,
              workspace_mode: workspace_mode,
-             priority: priority
+             priority: priority,
+             local_only: local_only,
+             assigned_agent: assigned_agent
            ) do
       {:ok, group, tasks}
     end
+  end
+
+  @spec local_only_group_ids() :: MapSet.t(integer())
+  def local_only_group_ids do
+    from(t in Task,
+      where: not is_nil(t.task_group_id),
+      select: {t.task_group_id, t.local_only}
+    )
+    |> Repo.all()
+    |> Enum.group_by(fn {gid, _} -> gid end, fn {_, local?} -> local? end)
+    |> Enum.filter(fn {_gid, flags} ->
+      flags != [] and Enum.all?(flags, & &1)
+    end)
+    |> Enum.map(fn {gid, _} -> gid end)
+    |> MapSet.new()
   end
 
   defp insert_child_tasks(group, chunks, opts) do
     project_path = Keyword.get(opts, :project_path)
     workspace_mode = Keyword.get(opts, :workspace_mode, "isolated")
     priority = Keyword.get(opts, :priority, 3)
+    local_only = Keyword.get(opts, :local_only, false)
+    assigned_agent = Keyword.get(opts, :assigned_agent)
 
     tasks =
       Enum.map(chunks, fn chunk ->
-        attrs = %{
-          "title" => chunk.title,
-          "body" => chunk.body,
-          "status" => "queued",
-          "priority" => priority,
-          "task_group_id" => group.id,
-          "local_only" => true,
-          "assigned_agent" => "ollama",
-          "workspace_mode" => workspace_mode
-        }
+        attrs =
+          %{
+            "title" => chunk.title,
+            "body" => chunk.body,
+            "status" => "queued",
+            "priority" => priority,
+            "task_group_id" => group.id,
+            "local_only" => local_only,
+            "workspace_mode" => workspace_mode
+          }
+          |> put_assigned_agent(local_only, assigned_agent)
 
         attrs =
           if is_binary(project_path) and project_path != "" do
@@ -123,6 +148,18 @@ defmodule SymphonyElixir.TaskGroups do
 
     Repo.delete!(group)
     :ok
+  end
+
+  defp put_assigned_agent(attrs, true, agent) do
+    Map.put(attrs, "assigned_agent", agent || "ollama")
+  end
+
+  defp put_assigned_agent(attrs, false, agent) when is_binary(agent) and agent != "" do
+    Map.put(attrs, "assigned_agent", agent)
+  end
+
+  defp put_assigned_agent(attrs, false, _) do
+    Map.put(attrs, "assigned_agent", "cursor")
   end
 
   defp default_group_title(description) do

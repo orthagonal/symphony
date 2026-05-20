@@ -89,13 +89,18 @@ defmodule SymphonyElixirWeb.TaskLive.New do
     else
       parent = self()
 
+      local_only = form[:local_only].value in [true, "true"]
+      assigned_agent = blank_to_nil(form[:assigned_agent].value)
+
       Elixir.Task.start(fn ->
         result =
           TaskGroups.generate_from_description(description,
             title: form[:title].value,
             project_path: blank_to_nil(form[:project_path].value),
             workspace_mode: form[:workspace_mode].value || "isolated",
-            priority: parse_priority(form[:priority].value)
+            priority: parse_priority(form[:priority].value),
+            local_only: local_only,
+            assigned_agent: assigned_agent
           )
 
         send(parent, {:task_group_done, result})
@@ -111,11 +116,13 @@ defmodule SymphonyElixirWeb.TaskLive.New do
   @impl true
   def handle_info({:task_group_done, {:ok, group, tasks}}, socket) do
     count = length(tasks)
+    local_only = socket.assigns.form[:local_only].value in [true, "true"]
+    dispatch = if local_only, do: "local-only (Ollama)", else: "Cursor"
 
     {:noreply,
      socket
      |> assign(:group_busy, false)
-     |> assign(:llm_hint, "Created group ##{group.id} with #{count} local-only tasks")
+     |> assign(:llm_hint, "Created group ##{group.id} with #{count} #{dispatch} tasks")
      |> push_navigate(to: "/task-groups/#{group.id}")}
   end
 
@@ -264,8 +271,9 @@ defmodule SymphonyElixirWeb.TaskLive.New do
       <section class="section-card form-card">
         <h2 class="section-title">Generate task group</h2>
         <p class="section-copy">
-          Uses Ollama to split a large task into smaller <strong>local-only</strong> subtasks (overnight batch).
-          Project folder and workspace mode above apply to every child task.
+          Uses Ollama to split a large task into smaller subtasks. With <strong>Local only</strong> checked above,
+          children run via Ollama only; otherwise they use Cursor/cursor-agent like a normal task.
+          Project folder, workspace mode, and assigned agent above apply to every child task.
         </p>
         <.form for={@form} id="task-group-form" phx-submit="generate_task_group">
           <label class="form-span-all">

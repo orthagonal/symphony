@@ -50,7 +50,7 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
             <p class="hero-copy">
               <span class="state-badge"><%= @group.status %></span>
               · <%= length(@group.tasks) %> tasks
-              <.local_only_badge />
+              <.local_only_badge :if={group_local_only?(@group.tasks)} />
             </p>
           </div>
           <.agent_nav current={@page} />
@@ -113,5 +113,9 @@ defmodule SymphonyElixirWeb.TaskGroupLive.Show do
 
   defp load_group(socket) do
     assign(socket, :group, TaskGroups.get_with_tasks!(socket.assigns.group_id))
+  end
+
+  defp group_local_only?(tasks) when is_list(tasks) do
+    tasks != [] and Enum.all?(tasks, & &1.local_only)
   end
 end
