@@ -13,6 +13,7 @@ defmodule SymphonyElixirWeb.Components.Nav do
       <a class={nav_class(@current, :reviews)} href="/reviews">Reviews</a>
       <a class={nav_class(@current, :new_task)} href="/tasks/new">New</a>
       <a class={nav_class(@current, :task_groups)} href="/task-groups">Groups</a>
+      <a class={nav_class(@current, :todos)} href="/todos">Todos</a>
       <a class={nav_class(@current, :agents)} href="/agents">Agents</a>
       <a class={nav_class(@current, :settings)} href="/settings">Settings</a>
       <a class={nav_class(@current, :cursor)} href="/cursor">Cursor</a>

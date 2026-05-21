@@ -3,9 +3,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
+  alias SymphonyElixir.Electron.Tool, as: ElectronTool
   alias SymphonyElixir.Linear.Client
 
   @linear_graphql_tool "linear_graphql"
+  @electron_debug_tool "electron_debug"
   @linear_graphql_description """
   Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.
   """
@@ -32,6 +34,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       @linear_graphql_tool ->
         execute_linear_graphql(arguments, opts)
 
+      @electron_debug_tool ->
+        execute_electron_debug(arguments, opts)
+
       other ->
         failure_response(%{
           "error" => %{
@@ -49,8 +54,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @linear_graphql_tool,
         "description" => @linear_graphql_description,
         "inputSchema" => @linear_graphql_input_schema
-      }
+      },
+      ElectronTool.tool_spec()
     ]
+  end
+
+  defp execute_electron_debug(arguments, opts) do
+    case ElectronTool.execute(arguments, opts) do
+      {:ok, payload} ->
+        ElectronTool.dynamic_tool_response({:ok, payload})
+
+      {:error, reason} ->
+        ElectronTool.dynamic_tool_response({:error, reason})
+    end
   end
 
   defp execute_linear_graphql(arguments, opts) do
